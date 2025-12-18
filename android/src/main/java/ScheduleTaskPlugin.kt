@@ -51,6 +51,7 @@ class SetEventHandlerArgs {
 class ScheduleTaskPlugin(private val activity: Activity): Plugin(activity) {
     private val scheduledTasks = mutableMapOf<String, ScheduledTaskInfo>()
     private var channel: Channel? = null
+    private var pendingEvent: JSObject? = null
 
     companion object {
         var instance: ScheduleTaskPlugin? = null
@@ -153,12 +154,13 @@ class ScheduleTaskPlugin(private val activity: Activity): Plugin(activity) {
         this.channel = args.handler
         Logger.info("[PLUGIN] Event handler set for scheduled tasks")
 
-        // val event = JSObject()
-        // event.put("event", "scheduledTaskHandler")
-        // event.put("message", "Event handler set successfully")
-        // event.put("task_name", "Test Task")
-        // event.put("task_id", "123-456-789")
-        // this.channel?.send(event)
+        // Send any pending event that arrived before the channel was ready
+        pendingEvent?.let { event ->
+            Logger.info("[PLUGIN] Sending pending event: $event")
+            this.channel?.send(event)
+            pendingEvent = null
+        }
+
         invoke.resolve()
     }
 
@@ -239,9 +241,39 @@ class ScheduleTaskPlugin(private val activity: Activity): Plugin(activity) {
 
         val intent = activity.intent
         Logger.info("[PLUGIN.load] Received the intent with the data ${intent.data} and the action ${intent.action}")
-        if (intent.action == Intent.ACTION_VIEW) {
-            //Logger.info("[PLUGIN] Received the intent with the data ${intent.data}")
-            //this.channel?.send(event)
+        Logger.info("[PLUGIN.load] Extras: ${intent.getStringExtra("run_task")}, ${intent.getStringExtra("task_id")}")
+
+        // Handle scheduled task intent when app starts from background
+        val taskName = intent.getStringExtra("run_task")
+        val taskId = intent.getStringExtra("task_id")
+
+        if (taskName != null && taskId != null) {
+            Logger.info("[PLUGIN.load] Detected scheduled task on app start: $taskName")
+            val event = JSObject()
+            event.put("task_name", taskName)
+            event.put("task_id", taskId)
+
+            val params = JSObject()
+            intent.extras?.keySet()?.forEach { key ->
+                if (key.startsWith("task_param_")) {
+                    val paramName = key.removePrefix("task_param_")
+                    val paramValue = intent.getStringExtra(key)
+                    if (paramValue != null) {
+                        params.put(paramName, paramValue)
+                    }
+                }
+            }
+            event.put("parameters", params)
+            Logger.info("[PLUGIN.load] Event payload: $event")
+
+            // Store the event if channel is not ready yet
+            if (this.channel != null) {
+                Logger.info("[PLUGIN.load] Channel is ready, sending event immediately")
+                this.channel?.send(event)
+            } else {
+                Logger.info("[PLUGIN.load] Channel not ready, storing event as pending")
+                this.pendingEvent = event
+            }
         }
 
         super.load(webView)
