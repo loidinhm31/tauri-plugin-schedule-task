@@ -157,6 +157,11 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Worker(c
 
                         val delayMs = calendar.timeInMillis - System.currentTimeMillis()
 
+                        // Cancel any existing daily_reminder tasks to avoid duplicates
+                        // This is important when user changes the reminder time
+                        WorkManager.getInstance(applicationContext).cancelAllWorkByTag("daily_reminder")
+                        Logger.info("[WORKER] Cancelled existing daily_reminder tasks")
+
                         // Create new work request for tomorrow
                         val workData = Data.Builder()
                             .putString("taskId", UUID.randomUUID().toString())
@@ -171,7 +176,7 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Worker(c
                         val workRequest = OneTimeWorkRequestBuilder<ScheduledTaskWorker>()
                             .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
                             .setInputData(workData)
-                            .addTag("daily_reminder")
+                            .addTag("daily_reminder") // Use task name as tag for consistent cancellation
                             .build()
 
                         WorkManager.getInstance(applicationContext).enqueue(workRequest)

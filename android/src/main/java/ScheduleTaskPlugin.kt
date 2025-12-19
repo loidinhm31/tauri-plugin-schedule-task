@@ -170,7 +170,7 @@ class ScheduleTaskPlugin(private val activity: Activity): Plugin(activity) {
             .putString("taskName", taskName)
             .putString("packageName", activity.packageName)
 
-            
+
         parameters?.forEach { (key, value) ->
             workData.putString("param_$key", value)
         }
@@ -179,6 +179,7 @@ class ScheduleTaskPlugin(private val activity: Activity): Plugin(activity) {
             .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
             .setInputData(workData.build())
             .addTag(taskId)
+            .addTag(taskName) // Add task name as tag for consistent cancellation (e.g., "daily_reminder")
             .build()
 
         WorkManager.getInstance(activity).enqueue(workRequest)
