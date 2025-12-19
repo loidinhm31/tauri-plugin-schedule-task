@@ -9,9 +9,14 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.work.Data
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import androidx.work.WorkManager
 import app.tauri.Logger
+import java.util.*
+import java.util.concurrent.TimeUnit
 
 class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
 
@@ -64,11 +69,13 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Worker(c
             } catch (e: Exception) {
                 Logger.error("[WORKER] Failed to start activity (will send notification instead): ${e.message}")
                 sendNotificationDirectly(taskId, taskName, packageName)
+                handleDailyRescheduling(taskName, packageName)
             }
         } else {
             // App is in background - send notification directly
             Logger.info("[WORKER] App in background, sending notification directly")
             sendNotificationDirectly(taskId, taskName, packageName)
+            handleDailyRescheduling(taskName, packageName)
         }
     }
 
@@ -111,7 +118,7 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Worker(c
 
         // Build and show notification
         val notification = NotificationCompat.Builder(applicationContext, channelId)
-            .setSmallIcon(android.R.drawable.ic_dialog_info) // You should use your app icon here
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title)
             .setContentText(body)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -123,6 +130,58 @@ class ScheduledTaskWorker(context: Context, params: WorkerParameters) : Worker(c
         notificationManager.notify(taskId.hashCode(), notification)
 
         Logger.info("[WORKER] Notification sent successfully")
+    }
+
+    private fun handleDailyRescheduling(taskName: String, packageName: String) {
+        val isDaily = inputData.getString("param_is_daily") == "true"
+
+        if (isDaily && taskName == "daily_reminder") {
+            val timeStr = inputData.getString("param_time")
+            if (timeStr != null) {
+                Logger.info("[WORKER] Rescheduling daily reminder for tomorrow at $timeStr")
+
+                try {
+                    // Parse time string (format: "HH:MM")
+                    val timeParts = timeStr.split(":")
+                    if (timeParts.size == 2) {
+                        val hour = timeParts[0].toInt()
+                        val minute = timeParts[1].toInt()
+
+                        // Calculate next occurrence (tomorrow at the same time)
+                        val calendar = Calendar.getInstance()
+                        calendar.add(Calendar.DAY_OF_YEAR, 1)
+                        calendar.set(Calendar.HOUR_OF_DAY, hour)
+                        calendar.set(Calendar.MINUTE, minute)
+                        calendar.set(Calendar.SECOND, 0)
+                        calendar.set(Calendar.MILLISECOND, 0)
+
+                        val delayMs = calendar.timeInMillis - System.currentTimeMillis()
+
+                        // Create new work request for tomorrow
+                        val workData = Data.Builder()
+                            .putString("taskId", UUID.randomUUID().toString())
+                            .putString("taskName", taskName)
+                            .putString("packageName", packageName)
+                            .putString("param_title", inputData.getString("param_title"))
+                            .putString("param_body", inputData.getString("param_body"))
+                            .putString("param_is_daily", "true")
+                            .putString("param_time", timeStr)
+                            .build()
+
+                        val workRequest = OneTimeWorkRequestBuilder<ScheduledTaskWorker>()
+                            .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
+                            .setInputData(workData)
+                            .addTag("daily_reminder")
+                            .build()
+
+                        WorkManager.getInstance(applicationContext).enqueue(workRequest)
+                        Logger.info("[WORKER] Successfully rescheduled daily reminder for ${calendar.time}")
+                    }
+                } catch (e: Exception) {
+                    Logger.error("[WORKER] Failed to reschedule daily reminder: ${e.message}")
+                }
+            }
+        }
     }
 
     private fun isAppInForeground(packageName: String): Boolean {
